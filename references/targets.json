@@ -1,0 +1,11 @@
+{
+  "targets": {
+    "resume_intake_v1": {
+      "app_token": "Ft4cbSinbaxhOusgmzNcvwDUnWh",
+      "table_id": "tblv3Pfr8Psw9Jr1",
+      "label": "招聘进度管理 - 2025年应聘人员登记",
+      "allow_create": true,
+      "allow_update": true
+    }
+  }
+}

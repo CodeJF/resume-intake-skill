@@ -11,6 +11,19 @@ ALLOWED_ACTIONS = {"create", "update"}
 REQUIRED_CREATE_FIELDS = {"应聘者姓名"}
 
 
+def normalize_field_value(value):
+    if isinstance(value, list) and value:
+        if all(isinstance(item, dict) and "text" in item and set(item.keys()).issubset({"text", "type"}) for item in value):
+            texts = [str(item.get("text", "")).strip() for item in value]
+            texts = [text for text in texts if text]
+            if len(texts) == 1:
+                return texts[0]
+            if texts:
+                return texts
+        return value
+    return value
+
+
 def load_cfg() -> dict:
     return json.loads(CFG.read_text(encoding="utf-8"))
 
@@ -32,7 +45,7 @@ def ensure_allowed(target_key: str, action: str, target: dict) -> None:
 
 
 def normalize_fields(fields: dict, action: str) -> dict:
-    normalized = dict(fields)
+    normalized = {key: normalize_field_value(value) for key, value in dict(fields).items()}
     age = normalized.get("年龄")
     if isinstance(age, str) and age.strip().isdigit():
         normalized["年龄"] = int(age.strip())

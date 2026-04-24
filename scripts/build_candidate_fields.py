@@ -104,6 +104,22 @@ def dense_resume_text(text: str) -> str:
     return re.sub(r"\s+", "", text or "")
 
 
+def count_cjk(text: str) -> int:
+    return len(re.findall(r"[\u4e00-\u9fa5]", text or ""))
+
+
+def maybe_fix_mojibake(text: str) -> str:
+    raw = text or ""
+    candidates = [raw]
+    for source_enc in ("latin1", "cp1252"):
+        try:
+            fixed = raw.encode(source_enc).decode("utf-8")
+        except Exception:
+            continue
+        candidates.append(fixed)
+    return max(candidates, key=lambda item: (count_cjk(item), -len(re.findall(r"[Ããåæçéöä_]{2,}", item)), len(item)))
+
+
 def normalize_candidate_name(name: str) -> str:
     name = re.sub(r"\s+", "", name or "")
     name = re.sub(r"(?:简历|个人简历|候选人|应聘)$", "", name)
@@ -153,13 +169,20 @@ def pick_name(text: str) -> str:
                     return picked
     raw_lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
     normalized_lines = [re.sub(r"\s+", "", ln) for ln in raw_lines]
-    for i, ln in enumerate(normalized_lines[:6]):
+    first_lines = normalized_lines[:6]
+    if first_lines:
+        first_line_name = normalize_candidate_name(first_lines[0])
+        nearby_context = " ".join(first_lines[1:6])
+        if first_line_name and re.search(r"(?:\d{2}\s*岁|\d+年工作经验|大专|本科|硕士|博士|求职意向|期望薪资|期望城市|1[3-9]\d{9}|@)", nearby_context):
+            return first_line_name
+    for i, ln in enumerate(first_lines):
         if ln in NAME_CONTEXT_STOPWORDS:
             continue
         if any(word in ln for word in TITLE_HINT_WORDS):
             continue
         next_line = normalized_lines[i + 1] if i + 1 < len(normalized_lines) else ""
-        if re.search(r"(?:1[3-9]\d{9}|年龄|岁|求职意向|应聘岗位|邮箱|@)", next_line):
+        next_two = " ".join(normalized_lines[i + 1:i + 3])
+        if re.search(r"(?:1[3-9]\d{9}|年龄|岁|求职意向|应聘岗位|邮箱|@)", next_line) or re.search(r"(?:\d{2}\s*岁|\d+年工作经验|大专|本科|硕士|博士|期望薪资|期望城市)", next_two):
             picked = normalize_candidate_name(ln)
             if picked:
                 return picked
@@ -169,7 +192,7 @@ def pick_name(text: str) -> str:
 def pick_name_from_filename(pdf_path: str | None) -> str:
     if not pdf_path:
         return ""
-    stem = Path(pdf_path).stem
+    stem = maybe_fix_mojibake(Path(pdf_path).stem)
     stem = re.sub(r"^\[[^\]]+\]\s*", "", stem)
     stem = re.sub(r"^【[^】]+】\s*", "", stem)
     stem = re.sub(r"(?:简历|个人简历|候选人简历|应聘简历)", " ", stem)

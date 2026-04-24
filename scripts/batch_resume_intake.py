@@ -12,6 +12,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 
+from file_name_utils import derive_source_name, prepare_upload_copy
+
 ROOT = Path(__file__).resolve().parent
 SINGLE_PLAN = ROOT / "resume_intake_tool_plan.py"
 DEFAULT_ALLOWED_EXTS = {".pdf"}
@@ -42,10 +44,11 @@ def should_skip_path(path: Path) -> bool:
     return any(part in SKIP_DIR_NAMES for part in path.parts) or path.name.startswith(tuple(SKIP_FILE_PREFIXES))
 
 
-def copy_single_pdf(input_path: Path, staging_dir: Path) -> list[IntakeInput]:
-    target = staging_dir / input_path.name
+def copy_single_pdf(input_path: Path, staging_dir: Path, source_name: str | None = None) -> list[IntakeInput]:
+    resolved_source_name = derive_source_name(input_path, source_name)
+    target = staging_dir / resolved_source_name
     shutil.copy2(input_path, target)
-    return [IntakeInput(source_name=input_path.name, pdf_path=target)]
+    return [IntakeInput(source_name=resolved_source_name, pdf_path=target)]
 
 
 def decode_zip_member_name(info: zipfile.ZipInfo) -> str:
@@ -85,10 +88,10 @@ def extract_zip_inputs(zip_path: Path, staging_dir: Path) -> list[IntakeInput]:
     return sorted(inputs, key=lambda item: item.source_name)
 
 
-def discover_inputs(input_path: Path, staging_dir: Path) -> list[IntakeInput]:
+def discover_inputs(input_path: Path, staging_dir: Path, source_name: str | None = None) -> list[IntakeInput]:
     suffix = input_path.suffix.lower()
     if suffix == ".pdf":
-        return copy_single_pdf(input_path, staging_dir)
+        return copy_single_pdf(input_path, staging_dir, source_name=source_name)
     if suffix == ".zip":
         return extract_zip_inputs(input_path, staging_dir)
     raise SystemExit(f"仅支持 PDF 或 ZIP 输入: {input_path}")
@@ -103,11 +106,11 @@ def build_job_plan(target_key: str, intake_input: IntakeInput, jobs_dir: Path, i
     job_dir = jobs_dir / job_id
     job_dir.mkdir(parents=True, exist_ok=True)
 
-    normalized_pdf_path = job_dir / Path(intake_input.source_name).name
-    if intake_input.pdf_path.resolve() != normalized_pdf_path.resolve():
-        shutil.copy2(intake_input.pdf_path, normalized_pdf_path)
-    else:
-        normalized_pdf_path = intake_input.pdf_path
+    normalized_pdf_path, normalized_source_name = prepare_upload_copy(
+        intake_input.pdf_path,
+        job_dir,
+        intake_input.source_name,
+    )
 
     plan_path = job_dir / "tool_plan.json"
     if plan_path.exists():
@@ -122,6 +125,8 @@ def build_job_plan(target_key: str, intake_input: IntakeInput, jobs_dir: Path, i
             str(normalized_pdf_path),
             "--work-dir",
             str(job_dir),
+            "--source-name",
+            normalized_source_name,
         ])
         plan = json.loads(proc.stdout)
 
@@ -137,7 +142,7 @@ def build_job_plan(target_key: str, intake_input: IntakeInput, jobs_dir: Path, i
 
     payload = {
         "job_id": job_id,
-        "source_name": intake_input.source_name,
+        "source_name": normalized_source_name,
         "pdf_path": str(normalized_pdf_path),
         "work_dir": str(job_dir),
         "plan": plan,
@@ -181,6 +186,7 @@ def main() -> int:
     ap.add_argument("--input-path", required=True, help="Path to a PDF resume or a ZIP containing multiple PDFs")
     ap.add_argument("--work-dir", required=True)
     ap.add_argument("--max-workers", type=int, default=3)
+    ap.add_argument("--source-name")
     args = ap.parse_args()
 
     input_path = Path(args.input_path)
@@ -194,7 +200,7 @@ def main() -> int:
     staging_dir.mkdir(parents=True, exist_ok=True)
     jobs_dir.mkdir(parents=True, exist_ok=True)
 
-    intake_inputs = discover_inputs(input_path, staging_dir)
+    intake_inputs = discover_inputs(input_path, staging_dir, source_name=args.source_name)
     if not intake_inputs:
         raise SystemExit("未发现可处理的 PDF 文件")
 
